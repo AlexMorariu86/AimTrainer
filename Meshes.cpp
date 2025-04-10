@@ -202,7 +202,10 @@ VOID Cleanup()
 
 VOID SetupWorldMatrix()
 {
-
+	// For our world matrix, we will just leave it as the identity
+	D3DXMATRIXA16 matWorld;
+	D3DXMatrixRotationY(&matWorld, timeGetTime() / 1000.0f);
+	d3dDevice->SetTransform(D3DTS_WORLD, &matWorld);
 }
 
 float distance;
