@@ -17,6 +17,16 @@ D3DMATERIAL9*           MeshMaterials = NULL; // Materials for our mesh
 LPDIRECT3DTEXTURE9*     MeshTextures  = NULL; // Textures for our mesh
 DWORD                   NumMaterials = 0L;   // Number of mesh materials
 CXCamera *camera; 
+POINT mousePos;
+POINT lastMousePos = { 0, 0 };
+
+static DWORD lastTime = 0;  
+float deltaTime = 0.0f;      
+
+LPD3DXMESH skyboxMesh = NULL;
+LPDIRECT3DTEXTURE9 skyboxTextures[6];  // Textures for the 6 faces of the skybox
+
+
 
 
 //-----------------------------------------------------------------------------
@@ -61,6 +71,7 @@ HRESULT InitD3D( HWND hWnd )
 }
 
 
+
 void InitiateCamera()
 {
 	camera = new CXCamera(d3dDevice);
@@ -83,88 +94,60 @@ void InitiateCamera()
 //-----------------------------------------------------------------------------
 HRESULT InitGeometry()
 {
+    // Load the mesh (for tiger.x or another mesh)
     LPD3DXBUFFER pD3DXMtrlBuffer;
-
-    // Load the mesh from the specified file
-    if( FAILED( D3DXLoadMeshFromX( "Tiger.x", D3DXMESH_SYSTEMMEM, 
-                                   d3dDevice, NULL, 
-                                   &pD3DXMtrlBuffer, NULL, &NumMaterials, 
-                                   &Mesh ) ) )
+    if (FAILED(D3DXLoadMeshFromX("Tiger.x", D3DXMESH_SYSTEMMEM, d3dDevice, NULL, &pD3DXMtrlBuffer, NULL, &NumMaterials, &Mesh)))
     {
-        // If model is not in current folder, try parent folder
-        if( FAILED( D3DXLoadMeshFromX( "..\\Tiger.x", D3DXMESH_SYSTEMMEM, 
-                                    d3dDevice, NULL, 
-                                    &pD3DXMtrlBuffer, NULL, &NumMaterials, 
-                                    &Mesh ) ) )
+        MessageBox(NULL, "Could not find tiger.x", "Error", MB_OK);
+        return E_FAIL;
+    }
+
+    // Set up the materials and textures for the mesh
+    D3DXMATERIAL* d3dxMaterials = (D3DXMATERIAL*)pD3DXMtrlBuffer->GetBufferPointer();
+    MeshMaterials = new D3DMATERIAL9[NumMaterials];
+    MeshTextures = new LPDIRECT3DTEXTURE9[NumMaterials];
+    for (DWORD i = 0; i < NumMaterials; i++)
+    {
+        MeshMaterials[i] = d3dxMaterials[i].MatD3D;
+        MeshMaterials[i].Ambient = MeshMaterials[i].Diffuse;
+
+        MeshTextures[i] = NULL;
+        if (d3dxMaterials[i].pTextureFilename != NULL && lstrlen(d3dxMaterials[i].pTextureFilename) > 0)
         {
-            MessageBox(NULL, "Could not find tiger.x", "Meshes.exe", MB_OK);
+            if (FAILED(D3DXCreateTextureFromFile(d3dDevice, d3dxMaterials[i].pTextureFilename, &MeshTextures[i])))
+            {
+                MessageBox(NULL, "Could not find texture map", "Error", MB_OK);
+            }
+        }
+    }
+    pD3DXMtrlBuffer->Release();
+
+    // Create the skybox mesh
+    HRESULT hr = D3DXCreateBox(d3dDevice, 500.0f, 500.0f, 500.0f, &skyboxMesh, NULL);
+    if (FAILED(hr))
+    {
+        MessageBox(NULL, "Failed to create skybox mesh", "Error", MB_OK);
+        return E_FAIL;
+    }
+
+    // Load skybox textures
+    const char* skyboxTextureFiles[6] = {
+        "skybox_posx.jpg", "skybox_negx.jpg",
+        "skybox_posy.jpg", "skybox_negy.jpg",
+        "skybox_posz.jpg", "skybox_negz.jpg"
+    };
+    for (int i = 0; i < 6; ++i)
+    {
+        hr = D3DXCreateTextureFromFile(d3dDevice, skyboxTextureFiles[i], &skyboxTextures[i]);
+        if (FAILED(hr))
+        {
+            MessageBox(NULL, "Failed to load skybox textures", "Error", MB_OK);
             return E_FAIL;
         }
     }
 
-    // We need to extract the material properties and texture names from the 
-    // pD3DXMtrlBuffer
-    D3DXMATERIAL* d3dxMaterials = (D3DXMATERIAL*)pD3DXMtrlBuffer->GetBufferPointer();
-    MeshMaterials = new D3DMATERIAL9[NumMaterials];
-    MeshTextures  = new LPDIRECT3DTEXTURE9[NumMaterials];
-
-    for( DWORD i=0; i<NumMaterials; i++ )
-    {
-        // Copy the material
-        MeshMaterials[i] = d3dxMaterials[i].MatD3D;
-
-        // Set the ambient color for the material (D3DX does not do this)
-        MeshMaterials[i].Ambient = MeshMaterials[i].Diffuse;
-
-        MeshTextures[i] = NULL;
-        if( d3dxMaterials[i].pTextureFilename != NULL && 
-            lstrlen(d3dxMaterials[i].pTextureFilename) > 0 )
-        {
-            // Create the texture
-            if( FAILED( D3DXCreateTextureFromFile( d3dDevice, 
-                                                d3dxMaterials[i].pTextureFilename, 
-                                                &MeshTextures[i] ) ) )
-            {
-                // If texture is not in current folder, try parent folder
-                const TCHAR* strPrefix = TEXT("..\\");
-                const int lenPrefix = lstrlen( strPrefix );
-                TCHAR strTexture[MAX_PATH];
-                lstrcpyn( strTexture, strPrefix, MAX_PATH );
-                lstrcpyn( strTexture + lenPrefix, d3dxMaterials[i].pTextureFilename, MAX_PATH - lenPrefix );
-                // If texture is not in current folder, try parent folder
-                if( FAILED( D3DXCreateTextureFromFile( d3dDevice, 
-                                                    strTexture, 
-                                                    &MeshTextures[i] ) ) )
-                {
-                    MessageBox(NULL, "Could not find texture map", "Meshes.exe", MB_OK);
-                }
-            }
-        }
-    }
-
-    // Done with the material buffer
-    pD3DXMtrlBuffer->Release();
-
-	//Declare object of type VertexBuffer
-	LPDIRECT3DVERTEXBUFFER9 VertexBuffer = NULL;
-	//The pointer to the current element in the array in VertexBuffer
-	BYTE* Vertices = NULL;
-	//Get the size of one element in the array of VertexBuffer 
-	DWORD FVFVertexSize = D3DXGetFVFVertexSize(Mesh->GetFVF());
-	//Get the VertexBuffer
-	Mesh->GetVertexBuffer(&VertexBuffer);
-	//Get the address of the first element in the array of VertexBuffer
-	VertexBuffer->Lock(0,0, (VOID**) &Vertices, D3DLOCK_DISCARD);
-	
-	/*
-		Avem access
-	*/
-	
-	VertexBuffer->Unlock();
-	VertexBuffer->Release();
-
-	InitiateCamera();
-
+    // Setup the camera
+    InitiateCamera();
     return S_OK;
 }
 
@@ -200,36 +183,13 @@ VOID Cleanup()
 }
 
 
-VOID SetupWorldMatrix()
-{
-	// For our world matrix, we will just leave it as the identity
-	D3DXMATRIXA16 matWorld;
-	D3DXMatrixRotationY(&matWorld, timeGetTime() / 1000.0f);
-	d3dDevice->SetTransform(D3DTS_WORLD, &matWorld);
-}
+
 
 float distance;
 int direction = 1;//1 forward, -1 backward
 int maximumStepDirection = 300;
 int currentStep = 0;
-void SetupViewMatrix()
-{
-	
-	//Below is a simulation of mooving forward - backwards. This is done by calling the camera method;
-	distance = 0.01 * direction;
-	currentStep = currentStep + direction;
-	if (currentStep > maximumStepDirection)
-	{
-		direction = -1;
-	}
-	if (currentStep < 0)
-		direction = 1;
-	camera->MoveForward(distance);
 
-	//Each time you render you must call update camera
-	//By calling camera update the View Matrix is set;
-	camera->Update();
-}
 
 
 void SetupProjectionMatrix()
@@ -252,13 +212,33 @@ d3dDevice->SetTransform(D3DTS_PROJECTION, &matProj);
 VOID SetupMatrices()
 {
 
-	SetupWorldMatrix();
-
-	SetupViewMatrix();
-	
 	SetupProjectionMatrix();
 
 }
+void HandleCameraInput(float deltaTime)
+{
+    // Get mouse movement deltas
+    LONG mouseDeltaX = 0, mouseDeltaY = 0;
+    if (GetCursorPos(&mousePos))
+    {
+        // Calculate the change in the mouse position
+        mouseDeltaX = mousePos.x - lastMousePos.x;
+        mouseDeltaY = mousePos.y - lastMousePos.y;
+
+        // Update the last mouse position for the next frame
+        lastMousePos = mousePos;
+    }
+
+    // Rotate camera based on mouse movement
+    const float sensitivity = 0.005f;  // Sensitivity of the mouse (adjust as needed)
+    camera->RotateRight(mouseDeltaX * sensitivity);
+    camera->RotateDown(mouseDeltaY * sensitivity);
+
+    // Update the camera view matrix
+    camera->Update();
+}
+
+
 
 //-----------------------------------------------------------------------------
 // Name: Render()
@@ -266,26 +246,41 @@ VOID SetupMatrices()
 //-----------------------------------------------------------------------------
 VOID Render()
 {
+    DWORD currentTime = GetTickCount();
+    deltaTime = (currentTime - lastTime) / 1000.0f;  // Convert to seconds
+    lastTime = currentTime;  // Store the current time for the next frame
+
+    HandleCameraInput(deltaTime);
+
     // Clear the backbuffer and the zbuffer
-    d3dDevice->Clear( 0, NULL, D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER, 
-                         D3DCOLOR_XRGB(0,0,255), 1.0f, 0 );
-    
+    d3dDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
+
     // Begin the scene
-    if( SUCCEEDED( d3dDevice->BeginScene() ) )
+    if (SUCCEEDED(d3dDevice->BeginScene()))
     {
+        // Render the skybox first (disable depth testing)
+        d3dDevice->SetRenderState(D3DRS_ZENABLE, D3DZB_FALSE);  // Disable depth testing
+        d3dDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE); // Disable culling
+
+        for (int i = 0; i < 6; ++i)
+        {
+            d3dDevice->SetTexture(0, skyboxTextures[i]);
+            skyboxMesh->DrawSubset(i);
+        }
+
+        // Re-enable depth testing and backface culling for other objects
+        d3dDevice->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE);
+        d3dDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_CCW);
+
         // Setup the world, view, and projection matrices
         SetupMatrices();
 
-        // Meshes are divided into subsets, one for each material. Render them in
-        // a loop
-        for( DWORD i=0; i<NumMaterials; i++ )
+        // Render the mesh
+        for (DWORD i = 0; i < NumMaterials; i++)
         {
-            // Set the material and texture for this subset
-            d3dDevice->SetMaterial( &MeshMaterials[i] );
-            d3dDevice->SetTexture( 0, MeshTextures[i] );
-        
-            // Draw the mesh subset
-            Mesh->DrawSubset( i );
+            d3dDevice->SetMaterial(&MeshMaterials[i]);
+            d3dDevice->SetTexture(0, MeshTextures[i]);
+            Mesh->DrawSubset(i);
         }
 
         // End the scene
@@ -293,7 +288,7 @@ VOID Render()
     }
 
     // Present the backbuffer contents to the display
-    d3dDevice->Present( NULL, NULL, NULL, NULL );
+    d3dDevice->Present(NULL, NULL, NULL, NULL);
 }
 
 
@@ -330,8 +325,8 @@ INT WINAPI WinMain( HINSTANCE hInst, HINSTANCE, LPSTR, INT )
     RegisterClassEx( &wc );
 
     // Create the application's window
-    HWND hWnd = CreateWindow( "D3D Tutorial", "D3D Tutorial 06: Meshes", 
-                              WS_OVERLAPPEDWINDOW, 100, 100, 300, 300,
+    HWND hWnd = CreateWindow( "D3D Tutorial", "Aim Trainer", 
+                              WS_OVERLAPPEDWINDOW, 100, 100, 1024, 1024,
                               GetDesktopWindow(), NULL, wc.hInstance, NULL );
 
     // Initialize Direct3D
